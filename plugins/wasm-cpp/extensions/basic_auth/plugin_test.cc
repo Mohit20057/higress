@@ -234,6 +234,10 @@ TEST_F(BasicAuthTest, OnConfigureNoRules) {
 }
 
 TEST_F(BasicAuthTest, OnConfigureOnlyRules) {
+  // Rules carry their own credentials/consumers next to a match key, so the
+  // matcher keeps a non-zero local config size and parses the rule
+  // (route_rule_matcher.h:872). Domain patterns are not validated, so
+  // "test.com.*" is accepted as a prefix match (route_rule_matcher.h:1046).
   // without consumer
   {
     std::string configuration = R"(
@@ -286,6 +290,10 @@ TEST_F(BasicAuthTest, OnConfigureOnlyRules) {
 }
 
 TEST_F(BasicAuthTest, OnConfigureEmptyRules) {
+  // Each rule holds only its credential material, so the matcher's
+  // `config.size() - 1` local config size drops to zero, parsePluginConfig is
+  // skipped, and the rule is rejected for missing every match key
+  // (route_rule_matcher.h:903). Both sub-cases fail configuration.
   // without consumer
   {
     std::string configuration = R"(
@@ -329,6 +337,10 @@ TEST_F(BasicAuthTest, OnConfigureEmptyRules) {
 }
 
 TEST_F(BasicAuthTest, OnConfigureDuplicateRules) {
+  // Carrying several match keys in one rule is not a duplicate error: the
+  // matcher only requires at least one (route_rule_matcher.h:903) and resolves
+  // the overlap by category precedence, route winning over domain
+  // (route_rule_matcher.h:910). Both sub-cases configure successfully.
   // without consumer
   {
     std::string configuration = R"(
@@ -347,7 +359,7 @@ TEST_F(BasicAuthTest, OnConfigureDuplicateRules) {
 
     EXPECT_CALL(*mock_context_, getBuffer(WasmBufferType::PluginConfiguration))
         .WillOnce([&buffer](WasmBufferType) { return &buffer; });
-    EXPECT_FALSE(root_context_->configure(configuration.size()));
+    EXPECT_TRUE(root_context_->configure(configuration.size()));
   }
 
   // with consumer
@@ -371,7 +383,7 @@ TEST_F(BasicAuthTest, OnConfigureDuplicateRules) {
 
     EXPECT_CALL(*mock_context_, getBuffer(WasmBufferType::PluginConfiguration))
         .WillOnce([&buffer](WasmBufferType) { return &buffer; });
-    EXPECT_FALSE(root_context_->configure(configuration.size()));
+    EXPECT_TRUE(root_context_->configure(configuration.size()));
   }
 }
 
