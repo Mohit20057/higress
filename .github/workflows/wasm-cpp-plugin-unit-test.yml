@@ -65,7 +65,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/plugins/wasm-cpp:/workspace" \
             -w /workspace \
             "$BUILDER_IMAGE" \
-            bazel test //extensions/... \
+            bazel test --build_tests_only //extensions/... \
               --disk_cache=/workspace/.bazel-cache \
               --test_output=errors \
               --verbose_failures \
