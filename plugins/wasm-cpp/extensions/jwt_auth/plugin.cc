@@ -51,7 +51,6 @@ constexpr uint32_t InitPeriod = 50;
 constexpr uint32_t MaxUpdatePeriod = 120000;
 constexpr uint32_t MinUpdatePeriod = 1000;
 constexpr std::string_view LastUpdateKey = "jwt_auth_remote_jwks_update";
-constexpr std::string_view FallbackFromHeader = "x-higress-fallback-from";
 constexpr absl::string_view InvalidTokenErrorString =
     ", error=\"invalid_token\"";
 constexpr uint32_t MaximumUriLength = 256;
@@ -676,17 +675,6 @@ FilterHeadersStatus PluginContext::onRequestHeaders(uint32_t, bool) {
   auto* rootCtx = rootContext();
   auto http_ctx_id = id();
   return rootCtx->checkAuthRule([=](const auto& config, const auto& allow_set) {
-    auto fallback_from = getRequestHeader(FallbackFromHeader)->toString();
-    auto consumer = getRequestHeader(ConsumerHeader)->toString();
-    if (!fallback_from.empty() && !consumer.empty()) {
-      LOG_DEBUG(absl::StrCat(
-          "fallback request reuses authenticated consumer: ", consumer));
-      if (!rootCtx->checkAuthorization(consumer, config, allow_set)) {
-        sendLocalResponse(403, kRcDetailJwtAuthnPrefix, "Access Denied", {});
-        return false;
-      }
-      return true;
-    }
     if (!rootCtx->fetchAllConsumerJwks(
             config.consumers, http_ctx_id, [&, allow_set]() {
               return rootCtx->checkPlugin(config, allow_set);

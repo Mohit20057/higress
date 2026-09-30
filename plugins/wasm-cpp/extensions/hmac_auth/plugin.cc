@@ -62,8 +62,6 @@ static constexpr std::string_view CA_ERRMSG = "x-ca-error-message";
 static constexpr std::string_view CA_TIMESTAMP = "x-ca-timestamp";
 static constexpr std::string_view CA_SIGNED_CONTENT_TYPE =
     "x-ca-signed-content-type";
-static constexpr std::string_view FALLBACK_FROM_HEADER =
-    "x-higress-fallback-from";
 
 static constexpr size_t MILLISEC_MIN_LENGTH = 13;
 
@@ -880,18 +878,6 @@ FilterHeadersStatus PluginContext::onRequestHeaders(uint32_t, bool) {
     // No allow set, means no need to check auth if global auth is disable
     LOG_DEBUG(
         "no allow set found, and global auth is disable, no need to auth");
-    return FilterHeadersStatus::Continue;
-  }
-
-  auto fallback_from = getRequestHeader(FALLBACK_FROM_HEADER)->toString();
-  auto consumer = getRequestHeader(ConsumerHeader)->toString();
-  if (!fallback_from.empty() && !consumer.empty()) {
-    LOG_DEBUG(absl::StrCat("fallback request reuses authenticated consumer: ",
-                           consumer));
-    if (!rootCtx->checkAuthorization(consumer, config_.value(), allow_set_)) {
-      deniedUnauthorizedConsumer();
-      return FilterHeadersStatus::StopAllIterationAndBuffer;
-    }
     return FilterHeadersStatus::Continue;
   }
 

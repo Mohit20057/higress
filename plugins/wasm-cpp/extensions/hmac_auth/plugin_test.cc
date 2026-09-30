@@ -913,7 +913,7 @@ TEST_F(HmacAuthTest, EmptyAllowSet) {
             FilterHeadersStatus::StopAllIterationAndBuffer);
 }
 
-TEST_F(HmacAuthTest, FallbackReusesAuthenticatedConsumer) {
+TEST_F(HmacAuthTest, FallbackMarkerDoesNotBypassAuthentication) {
   headers_ = {
       {"x-higress-fallback-from", "original-cluster"},
       {"X-Mse-Consumer", "consumer"},
@@ -932,10 +932,12 @@ TEST_F(HmacAuthTest, FallbackReusesAuthenticatedConsumer) {
   config_.set(configuration);
   EXPECT_TRUE(root_context_->configure(configuration.size()));
 
-  // No HMAC credential is present, but an authenticated fallback consumer can
-  // proceed directly to authorization.
+  // Both headers are client-settable, so a marker plus a claimed consumer must
+  // not authenticate anything: no HMAC signature is presented.
+  EXPECT_CALL(*mock_context_, sendLocalResponse(401, testing::_, testing::_,
+                                                testing::_, testing::_));
   EXPECT_EQ(context_->onRequestHeaders(0, false),
-            FilterHeadersStatus::Continue);
+            FilterHeadersStatus::StopAllIterationAndBuffer);
 
   // The consumer header alone must not bypass authentication.
   headers_.erase("x-higress-fallback-from");
@@ -972,10 +974,53 @@ TEST_F(HmacAuthTest, FallbackConsumerMustPassAuthorization) {
   config_.set(configuration);
   EXPECT_TRUE(root_context_->configure(configuration.size()));
 
-  EXPECT_CALL(*mock_context_, sendLocalResponse(403, testing::_, testing::_,
+  // An off-allow-list consumer used to reach authorization and fail with 403.
+  // No consumer is established without a verified signature, so the request now
+  // fails authentication with 401.
+  EXPECT_CALL(*mock_context_, sendLocalResponse(401, testing::_, testing::_,
                                                 testing::_, testing::_));
   EXPECT_EQ(context_->onRequestHeaders(0, false),
             FilterHeadersStatus::StopAllIterationAndBuffer);
+}
+
+TEST_F(HmacAuthTest, ForgedFallbackIdentityIsSanitized) {
+  headers_ = {
+      {":path", "/Third/Tools/checkSign"},
+      {":method", "GET"},
+      {"x-higress-fallback-from", "original-cluster"},
+      {"x-ca-key", "appKey"},
+      {"X-Mse-Consumer", "consumer-vip"},
+      {"X-Mse-Consumer-Group", "forged-group"},
+  };
+  std::string configuration = R"(
+{
+  "consumers": [
+    {"key": "appKey", "secret": "appSecret", "name": "consumer-basic"},
+    {"key": "vipKey", "secret": "vipSecret", "name": "consumer-vip"}
+  ],
+  "_rules_": [
+    {
+      "_match_route_": ["test"],
+      "allow": ["consumer-basic", "consumer-vip"]
+    }
+  ]
+})";
+  route_name_ = "test";
+  config_.set(configuration);
+  EXPECT_TRUE(root_context_->configure(configuration.size()));
+
+  // Holding only appKey, the caller claims the identity of another allowed
+  // consumer. Reusing that claim on a fallback request used to be enough to
+  // pass; the request must now fail closed for want of a signature, and neither
+  // forged value may survive onto the wire.
+  EXPECT_CALL(*mock_context_, sendLocalResponse(401, testing::_, testing::_,
+                                                testing::_, testing::_));
+  EXPECT_EQ(context_->onRequestHeaders(0, false),
+            FilterHeadersStatus::StopAllIterationAndBuffer);
+  // The gateway replaces the claimed consumer with its own assertion for the
+  // presented key and clears a group it never authenticated.
+  EXPECT_EQ(headers_["X-Mse-Consumer"], "consumer-basic");
+  EXPECT_EQ(headers_["X-Mse-Consumer-Group"], "");
 }
 
 TEST_F(HmacAuthTest, SignWithConsumerRbac) {

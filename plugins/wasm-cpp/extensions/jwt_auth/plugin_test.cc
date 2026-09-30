@@ -368,7 +368,7 @@ TEST_F(JwtAuthTest, AuthZ) {
             FilterHeadersStatus::Continue);
 }
 
-TEST_F(JwtAuthTest, FallbackReusesAuthenticatedConsumer) {
+TEST_F(JwtAuthTest, FallbackMarkerDoesNotBypassAuthentication) {
   std::string configuration = R"(
 {
     "consumers": [
@@ -394,10 +394,12 @@ TEST_F(JwtAuthTest, FallbackReusesAuthenticatedConsumer) {
   header_map_["x-higress-fallback-from"] = "original-cluster";
   header_map_["X-Mse-Consumer"] = "consumer-1";
 
-  // No JWT is present, but an authenticated fallback consumer can proceed
-  // directly to authorization.
+  // Both headers are client-settable, so a marker plus a claimed consumer must
+  // not authenticate anything: no JWT was presented.
+  EXPECT_CALL(*mock_context_, sendLocalResponse(401, testing::_, testing::_,
+                                                testing::_, testing::_));
   EXPECT_EQ(context_->onRequestHeaders(0, false),
-            FilterHeadersStatus::Continue);
+            FilterHeadersStatus::StopIteration);
 
   // The consumer header alone must not bypass authentication.
   header_map_.erase("x-higress-fallback-from");
@@ -441,7 +443,86 @@ TEST_F(JwtAuthTest, FallbackConsumerMustPassAuthorization) {
   header_map_["x-higress-fallback-from"] = "original-cluster";
   header_map_["X-Mse-Consumer"] = "consumer-2";
 
-  EXPECT_CALL(*mock_context_, sendLocalResponse(403, testing::_, testing::_,
+  // An off-allow-list consumer used to reach authorization and fail with 403.
+  // No consumer is established without a verified JWT, so the request now
+  // fails authentication with 401.
+  EXPECT_CALL(*mock_context_, sendLocalResponse(401, testing::_, testing::_,
+                                                testing::_, testing::_));
+  EXPECT_EQ(context_->onRequestHeaders(0, false),
+            FilterHeadersStatus::StopIteration);
+}
+
+// RS256 token for issuer "abc", signed by the "consumer-1" key below and valid
+// at the current_time_ used by the fallback tests. The tampered variant differs
+// only in the first character of the signature.
+constexpr std::string_view kValidOriginalAuthJwt =
+    R"(Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjEyMyJ9.eyJpc3MiOiJhYmMiLCJzdWIiOiJ0ZXN0IiwiaWF0IjoxNjY1NjYwNTI3LCJleHAiOjE2NjU2NzM4MTl9.FwSnlW9NjZ_5w6cm-YqteUy4LjKCXfQCWVCGcM3RsaqBhcHTz_IFOFMLnjI9QAG_IhxPP4s0ln7-duESns4YogkmqWV0ckMKZo9OEYOLpD6kXaA6H6g9RaLedogReKk1bDauFWFBrqMwvnxIqOIPj2ZOEQcKDVxO08mPSXb5-cxbvCA2rcmBk8_JHD8DBW990IfUCrsUFP4w4Zy3HlU__ZZhaCqzukI1ZOOgwu2_wMifvdv2n2PvqRNcmpjuGJ-FUXhAduCTPO9ZLGBOZcxkPl4U28Frfb1hSEV83NfK3iPBoLjC3u-M7kc1FJHcUORy_Bof6mzBX7npYckbsb-SJA)";
+constexpr std::string_view kTamperedOriginalAuthJwt =
+    R"(Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjEyMyJ9.eyJpc3MiOiJhYmMiLCJzdWIiOiJ0ZXN0IiwiaWF0IjoxNjY1NjYwNTI3LCJleHAiOjE2NjU2NzM4MTl9.GwSnlW9NjZ_5w6cm-YqteUy4LjKCXfQCWVCGcM3RsaqBhcHTz_IFOFMLnjI9QAG_IhxPP4s0ln7-duESns4YogkmqWV0ckMKZo9OEYOLpD6kXaA6H6g9RaLedogReKk1bDauFWFBrqMwvnxIqOIPj2ZOEQcKDVxO08mPSXb5-cxbvCA2rcmBk8_JHD8DBW990IfUCrsUFP4w4Zy3HlU__ZZhaCqzukI1ZOOgwu2_wMifvdv2n2PvqRNcmpjuGJ-FUXhAduCTPO9ZLGBOZcxkPl4U28Frfb1hSEV83NfK3iPBoLjC3u-M7kc1FJHcUORy_Bof6mzBX7npYckbsb-SJA)";
+
+TEST_F(JwtAuthTest, FallbackRequestVerifiesJwtFromOriginalAuthHeader) {
+  std::string configuration = R"(
+{
+    "consumers": [
+        {
+            "name": "consumer-1",
+            "issuer": "abc",
+            "jwks": "{\"keys\":[{\"kty\":\"RSA\",\"e\":\"AQAB\",\"use\":\"sig\",\"kid\":\"123\",\"alg\":\"RS256\",\"n\":\"i0B67f1jggT9QJlZ_8QL9QQ56LfurrqDhpuu8BxtVcfxrYmaXaCtqTn7OfCuca7cGHdrJIjq99rz890NmYFZuvhaZ-LMt2iyiSb9LZJAeJmHf7ecguXS_-4x3hvbsrgUDi9tlg7xxbqGYcrco3anmalAFxsbswtu2PAXLtTnUo6aYwZsWA6ksq4FL3-anPNL5oZUgIp3HGyhhLTLdlQcC83jzxbguOim-0OEz-N4fniTYRivK7MlibHKrJfO3xa_6whBS07HW4Ydc37ZN3Rx9Ov3ZyV0idFblU519nUdqp_inXj1eEpynlxH60Ys_aTU2POGZh_25KXGdF_ZC_MSRw\"}]}"
+        }
+    ],
+    "_rules_": [
+        {
+            "_match_route_": ["test"],
+            "allow": ["consumer-1"]
+        }
+    ]
+})";
+  BufferBase buffer;
+  buffer.set({configuration.data(), configuration.size()});
+  EXPECT_CALL(*mock_context_, getBuffer(WasmBufferType::PluginConfiguration))
+      .WillOnce([&buffer](WasmBufferType) { return &buffer; });
+  EXPECT_TRUE(root_context_->configure(configuration.size()));
+  route_name_ = "test";
+  current_time_ = 1665673819 * 1e9;
+  header_map_["x-higress-fallback-from"] = "original-cluster";
+  header_map_["x-hi-original-auth"] = std::string(kValidOriginalAuthJwt);
+
+  // Authorization is the only token source on a fallback request, so reaching
+  // Continue proves the extractor picked the JWT up from x-hi-original-auth and
+  // verified its signature.
+  EXPECT_EQ(context_->onRequestHeaders(0, false),
+            FilterHeadersStatus::Continue);
+  EXPECT_EQ(header_map_["X-Mse-Consumer"], "consumer-1");
+}
+
+TEST_F(JwtAuthTest, FallbackRequestRejectsTamperedOriginalAuthJwt) {
+  std::string configuration = R"(
+{
+    "consumers": [
+        {
+            "name": "consumer-1",
+            "issuer": "abc",
+            "jwks": "{\"keys\":[{\"kty\":\"RSA\",\"e\":\"AQAB\",\"use\":\"sig\",\"kid\":\"123\",\"alg\":\"RS256\",\"n\":\"i0B67f1jggT9QJlZ_8QL9QQ56LfurrqDhpuu8BxtVcfxrYmaXaCtqTn7OfCuca7cGHdrJIjq99rz890NmYFZuvhaZ-LMt2iyiSb9LZJAeJmHf7ecguXS_-4x3hvbsrgUDi9tlg7xxbqGYcrco3anmalAFxsbswtu2PAXLtTnUo6aYwZsWA6ksq4FL3-anPNL5oZUgIp3HGyhhLTLdlQcC83jzxbguOim-0OEz-N4fniTYRivK7MlibHKrJfO3xa_6whBS07HW4Ydc37ZN3Rx9Ov3ZyV0idFblU519nUdqp_inXj1eEpynlxH60Ys_aTU2POGZh_25KXGdF_ZC_MSRw\"}]}"
+        }
+    ],
+    "_rules_": [
+        {
+            "_match_route_": ["test"],
+            "allow": ["consumer-1"]
+        }
+    ]
+})";
+  BufferBase buffer;
+  buffer.set({configuration.data(), configuration.size()});
+  EXPECT_CALL(*mock_context_, getBuffer(WasmBufferType::PluginConfiguration))
+      .WillOnce([&buffer](WasmBufferType) { return &buffer; });
+  EXPECT_TRUE(root_context_->configure(configuration.size()));
+  route_name_ = "test";
+  current_time_ = 1665673819 * 1e9;
+  header_map_["x-higress-fallback-from"] = "original-cluster";
+  header_map_["x-hi-original-auth"] = std::string(kTamperedOriginalAuthJwt);
+
+  EXPECT_CALL(*mock_context_, sendLocalResponse(401, testing::_, testing::_,
                                                 testing::_, testing::_));
   EXPECT_EQ(context_->onRequestHeaders(0, false),
             FilterHeadersStatus::StopIteration);
