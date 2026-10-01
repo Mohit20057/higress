@@ -72,8 +72,7 @@ func RunGithubOnHttpRequestHeadersTests(t *testing.T) {
 
 			authValue, ok := test.GetHeaderValue(requestHeaders, "Authorization")
 			require.True(t, ok)
-			// GitHub provider sets raw token without "Bearer " prefix
-			require.Equal(t, "github_models_pat_test", authValue)
+			require.Equal(t, "Bearer github_models_pat_test", authValue)
 
 			pathValue, ok := test.GetHeaderValue(requestHeaders, ":path")
 			require.True(t, ok)
@@ -88,6 +87,34 @@ func RunGithubOnHttpRequestHeadersTests(t *testing.T) {
 				}
 			}
 			require.True(t, found, "expected ai-proxy or github debug logs")
+		})
+		t.Run("github embeddings headers", func(t *testing.T) {
+			host, status := test.NewTestHost(basicGithubConfig)
+			defer host.Reset()
+			require.Equal(t, types.OnPluginStartStatusOK, status)
+
+			action := host.CallOnHttpRequestHeaders([][2]string{
+				{":authority", "example.com"},
+				{":path", "/v1/embeddings"},
+				{":method", "POST"},
+				{"Content-Type", "application/json"},
+			})
+			require.Equal(t, types.HeaderStopIteration, action)
+
+			requestHeaders := host.GetRequestHeaders()
+			require.NotNil(t, requestHeaders)
+
+			hostValue, ok := test.GetHeaderValue(requestHeaders, ":authority")
+			require.True(t, ok)
+			require.Equal(t, "models.inference.ai.azure.com", hostValue)
+
+			authValue, ok := test.GetHeaderValue(requestHeaders, "Authorization")
+			require.True(t, ok)
+			require.Equal(t, "Bearer github_models_pat_test", authValue)
+
+			pathValue, ok := test.GetHeaderValue(requestHeaders, ":path")
+			require.True(t, ok)
+			require.Equal(t, "/embeddings", pathValue)
 		})
 	})
 }

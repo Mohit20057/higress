@@ -172,7 +172,7 @@ func RunAi360OnHttpRequestHeadersTests(t *testing.T) {
 			// 验证Authorization是否被设置
 			authValue, hasAuth := test.GetHeaderValue(requestHeaders, "Authorization")
 			require.True(t, hasAuth, "Authorization header should exist")
-			require.Contains(t, authValue, "sk-ai360-test123456789", "Authorization should contain ai360 API token")
+			require.Equal(t, "Bearer sk-ai360-test123456789", authValue, "Authorization should contain Bearer prefix and token")
 
 			// 验证Path是否被正确处理
 			pathValue, hasPath := test.GetHeaderValue(requestHeaders, ":path")
@@ -225,7 +225,7 @@ func RunAi360OnHttpRequestHeadersTests(t *testing.T) {
 			// 验证Authorization设置
 			authValue, hasAuth := test.GetHeaderValue(requestHeaders, "Authorization")
 			require.True(t, hasAuth, "Authorization header should exist for embeddings")
-			require.Contains(t, authValue, "sk-ai360-test123456789", "Authorization should contain ai360 API token")
+			require.Equal(t, "Bearer sk-ai360-test123456789", authValue, "Authorization should contain Bearer prefix and token")
 		})
 
 		// 测试ai360请求头处理（不支持的接口）

@@ -64,5 +64,5 @@ func (m *ai360Provider) OnRequestBody(ctx wrapper.HttpContext, apiName ApiName, 
 func (m *ai360Provider) TransformRequestHeaders(ctx wrapper.HttpContext, apiName ApiName, headers http.Header) {
 	util.OverwriteRequestHostHeader(headers, ai360Domain)
 	util.OverwriteRequestPathHeaderByCapability(headers, string(apiName), m.config.capabilities)
-	util.OverwriteRequestAuthorizationHeader(headers, m.config.GetApiTokenInUse(ctx))
+	util.OverwriteRequestAuthorizationHeader(headers, "Bearer "+m.config.GetApiTokenInUse(ctx))
 }
